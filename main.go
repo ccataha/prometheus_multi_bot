@@ -347,7 +347,7 @@ func telegramBot(bot *tgbotapi.BotAPI) {
 
 func loadTemplate(tmplPath string) *template.Template {
 	// let's read template
-	tmpH, err := template.New(path.Base(tmplPath)).Funcs(funcMap).ParseFiles(tmplPath)
+	tmpH, err := template.New(path.Base(tmplPath)).Funcs(funcMap).ParseFiles(cfg.TemplatePath)
 
 	if err != nil {
 		log.Fatalf("Problem reading parsing template file: %v", err)
