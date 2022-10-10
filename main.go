@@ -382,8 +382,9 @@ func makeTemplateMap() {
 		tmpS["default"] = loadTemplate(cfg.TemplatePath)
 	}
 	if cfg.MultipleTemplates != nil {
-		for chatid, tmplPath = range cfg.MultipleTemplates {
+		for chatid, tmplPath := range cfg.MultipleTemplates {
 			tmpS[chatid] = loadTemplate(tmplPath)
+			_ = chatid
 		}
 	}
 }
