@@ -554,7 +554,7 @@ func AlertFormatStandard(alerts Alerts) string {
 	)
 }
 
-func AlertFormatTemplate(alerts Alerts) string {
+func AlertFormatTemplate(alerts Alerts, chatID string) string {
 	var bytesBuff bytes.Buffer
 	var err error
 
@@ -565,6 +565,7 @@ func AlertFormatTemplate(alerts Alerts) string {
 		// reload template bacause we in debug mode
 		makeTemplateMap()
 	}
+
 	tpl := templateChoose(chatID)
 	tpl.Funcs(funcMap)
 	err = tpl.Execute(writer, alerts)
