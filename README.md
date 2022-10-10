@@ -25,7 +25,7 @@ make
     # OPTIONAL TEMPLATES FOR DIFFERENT CHART
     # map[chatid]templatepath
     multiple_teplates: 
-      -12138679618923: "template-extra.tmpl" ##
+      "-12138679618923": "template-extra.tmpl" ##
     time_zone: "Europe/Rome"
     split_token: "|"    
 
