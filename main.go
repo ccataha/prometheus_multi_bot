@@ -1,4 +1,4 @@
-package main // import "github.com/koidula/prometheus_multi_bot"
+package main // import "github.com/inCaller/prometheus_bot"
 
 import (
 	"bytes"
@@ -347,7 +347,7 @@ func telegramBot(bot *tgbotapi.BotAPI) {
 
 func loadTemplate(tmplPath string) *template.Template {
 	// let's read template
-	tmpH, err := template.New(path.Base(tmplPath)).Funcs(funcMap).ParseFiles(cfg.TemplatePath)
+	tmpH, err := template.New(path.Base(tmplPath)).Funcs(funcMap).ParseFiles(tmplPath)
 
 	if err != nil {
 		log.Fatalf("Problem reading parsing template file: %v", err)
@@ -382,8 +382,8 @@ func makeTemplateMap() {
 		tmpS["default"] = loadTemplate(cfg.TemplatePath)
 	}
 	if cfg.MultipleTemplates != nil {
-		for chatid, tmplPath := range cfg.MultipleTemplates {
-			tmpS["chatid"] = loadTemplate(tmplPath)
+		for chatid, tmplPath = range cfg.MultipleTemplates {
+			tmpS[chatid] = loadTemplate(tmplPath)
 		}
 	}
 }
