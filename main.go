@@ -3,6 +3,7 @@ package main // import "github.com/inCaller/prometheus_bot"
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"flag"
 	"fmt"
 	"io"
@@ -16,12 +17,14 @@ import (
 	"strings"
 	"time"
 
+	"html/template"
+
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
-	"gopkg.in/telegram-bot-api.v4"
-	"gopkg.in/yaml.v2"
+	"github.com/microcosm-cc/bluemonday"
+	tgbotapi "gopkg.in/telegram-bot-api.v4"
 
-	"html/template"
+	"gopkg.in/yaml.v2"
 )
 
 type Alerts struct {
@@ -46,17 +49,19 @@ type Alert struct {
 }
 
 type Config struct {
-	TelegramToken     string            `yaml:"telegram_token"`
-	TemplatePath      string            `yaml:"template_path"`
+	TelegramToken       string `yaml:"telegram_token"`
+	TemplatePath        string `yaml:"template_path"`
 	MultipleTemplates map[string]string `yaml:"multiple_templates,omitempty"`
-	TimeZone          string            `yaml:"time_zone"`
-	TimeOutFormat     string            `yaml:"time_outdata"`
-	SplitChart        string            `yaml:"split_token"`
-	SplitMessageBytes int               `yaml:"split_msg_byte"`
+	TimeZone            string `yaml:"time_zone"`
+	TimeOutFormat       string `yaml:"time_outdata"`
+	SplitChart          string `yaml:"split_token"`
+	SplitMessageBytes   int    `yaml:"split_msg_byte"`
+	SendOnly            bool   `yaml:"send_only"`
+	DisableNotification bool   `yaml:"disable_notification"`
 }
 
 /**
- * Subdivideb by 1024
+ * Subdivided by 1024
  */
 const (
 	Kb = iota
@@ -292,6 +297,7 @@ func HasKey(dict map[string]interface{}, key_search string) bool {
 
 // Global
 var config_path = flag.String("c", "config.yaml", "Path to a config file")
+var token_path = flag.String("token-from", "", "Path to a file containing telegram_token")
 var listen_addr = flag.String("l", ":9087", "Listen address")
 var template_path = flag.String("t", "", "Path to a template file")
 var debug = flag.Bool("d", false, "Debug template")
@@ -323,6 +329,9 @@ func telegramBot(bot *tgbotapi.BotAPI) {
 
 	introduce := func(update tgbotapi.Update) {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Chat id is '%d'", update.Message.Chat.ID))
+		if cfg.DisableNotification {
+			msg.DisableNotification = true
+		}
 		bot.Send(msg)
 	}
 
@@ -401,24 +410,25 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error parsing configuration file: %v", err)
 	}
+
 	if *template_path != "" {
 		cfg.TemplatePath = *template_path
+	}
+
+	if *token_path != "" {
+		content, err := ioutil.ReadFile(*token_path)
+		if err != nil {
+			log.Fatalf("Problem reading token file: %v", err)
+		}
+		cfg.TelegramToken = strings.TrimSpace(string(content))
 	}
 
 	if cfg.SplitMessageBytes == 0 {
 		cfg.SplitMessageBytes = 4000
 	}
+
 	makeTemplateMap()
 
-	bot_tmp, err := tgbotapi.NewBotAPI(cfg.TelegramToken)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	bot = bot_tmp
-	if *debug {
-		bot.Debug = true
-	}
 	if cfg.TimeZone == "" {
 		log.Fatalf("You must define time_zone of your bot")
 		panic(-1)
@@ -427,9 +437,28 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
+	for {
+		bot_tmp, err := tgbotapi.NewBotAPI(cfg.TelegramToken)
+		if err == nil {
+			bot = bot_tmp
+			break
+		} else {
+			log.Printf("Error initializing telegram connection: %s", err)
+			time.Sleep(time.Second)
+		}
+	}
+
+	if *debug {
+		bot.Debug = true
+	}
+
 	log.Printf("Authorised on account %s", bot.Self.UserName)
 
-	go telegramBot(bot)
+	if cfg.SendOnly {
+		log.Printf("Works in send_only mode")
+	} else {
+		go telegramBot(bot)
+	}
 
 	router := gin.Default()
 
@@ -452,6 +481,9 @@ func GET_Handling(c *gin.Context) {
 	log.Printf("Bot test: %d", chatid)
 	msgtext := fmt.Sprintf("Some HTTP triggered notification by prometheus bot... %d", chatid)
 	msg := tgbotapi.NewMessage(chatid, msgtext)
+	if cfg.DisableNotification {
+		msg.DisableNotification = true
+	}
 	sendmsg, err := bot.Send(msg)
 	if err == nil {
 		c.String(http.StatusOK, msgtext)
@@ -522,7 +554,7 @@ func AlertFormatStandard(alerts Alerts) string {
 	)
 }
 
-func AlertFormatTemplate(alerts Alerts, chatID string) string {
+func AlertFormatTemplate(alerts Alerts) string {
 	var bytesBuff bytes.Buffer
 	var err error
 
@@ -530,7 +562,7 @@ func AlertFormatTemplate(alerts Alerts, chatID string) string {
 
 	if *debug {
 		log.Printf("Reloading Template\n")
-		// reload template because we in debug mode
+		// reload template bacause we in debug mode
 		makeTemplateMap()
 	}
 	tpl := templateChoose(chatID)
@@ -551,6 +583,38 @@ func templateChoose(chatid string) *template.Template {
 		return tmpS["default"]
 	}
 	return tpl
+}
+// SanitizeMsg check string for HTML validity and
+// strips all HTML tags if it not valid
+func SanitizeMsg(str string) string {
+	r := strings.NewReader(str)
+	d := xml.NewDecoder(r)
+
+	d.Strict = false
+	d.AutoClose = xml.HTMLAutoClose
+	d.Entity = xml.HTMLEntity
+	exitParser := false
+	for {
+		_, err := d.Token()
+		switch err {
+		case io.EOF:
+			log.Println("HTML is valid, sending it...")
+			exitParser = true
+			break
+		case nil:
+		default:
+			log.Println("HTML is not valid, strip all tags to prevent error")
+			p := bluemonday.StrictPolicy()
+			str = p.Sanitize(str)
+			exitParser = true
+			break
+		}
+		if exitParser {
+			break
+		}
+	}
+
+	return str
 }
 
 func POST_Handling(c *gin.Context) {
@@ -589,7 +653,10 @@ func POST_Handling(c *gin.Context) {
 		msgtext = AlertFormatTemplate(alerts, c.Param("chatid"))
 	}
 	for _, subString := range SplitString(msgtext, cfg.SplitMessageBytes) {
-		msg := tgbotapi.NewMessage(chatid, subString)
+
+		sanitizedString := SanitizeMsg(subString)
+
+		msg := tgbotapi.NewMessage(chatid, sanitizedString)
 		msg.ParseMode = tgbotapi.ModeHTML
 
 		// Print in Log result message
@@ -598,6 +665,9 @@ func POST_Handling(c *gin.Context) {
 		log.Println("+-----------------------------------------------------------+")
 
 		msg.DisableWebPagePreview = true
+		if cfg.DisableNotification {
+			msg.DisableNotification = true
+		}
 
 		sendmsg, err := bot.Send(msg)
 		if err == nil {
@@ -610,6 +680,9 @@ func POST_Handling(c *gin.Context) {
 				"srcmsg":  fmt.Sprint(msgtext),
 			})
 			msg := tgbotapi.NewMessage(chatid, "Error sending message, checkout logs")
+			if cfg.DisableNotification {
+				msg.DisableNotification = true
+			}
 			bot.Send(msg)
 		}
 	}
