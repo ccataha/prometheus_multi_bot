@@ -42,6 +42,7 @@ type Alert struct {
 	GeneratorURL string                 `json:"generatorURL"`
 	Labels       map[string]interface{} `json:"labels"`
 	StartsAt     string                 `json:"startsAt"`
+	Status       string                 `json:"status"`
 }
 
 type Config struct {
